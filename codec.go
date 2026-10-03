@@ -74,6 +74,10 @@ type Codec struct {
 	schemaOriginal  string
 	schemaCanonical string
 	typeName        *name
+	// prefillStub is true for placeholder codecs registered by the modular
+	// builder before a named type's body has been compiled. It is never
+	// observable outside this package.
+	prefillStub bool
 
 	nativeFromTextual func([]byte) (interface{}, []byte, error)
 	binaryFromNative  func([]byte, interface{}) ([]byte, error)
@@ -775,6 +779,13 @@ func registerNewCodec(st map[string]*Codec, schemaMap map[string]interface{}, en
 	n, err := newNameFromSchemaMap(enclosingNamespace, schemaMap)
 	if err != nil {
 		return nil, err
+	}
+	// A stub may have been pre-registered by the modular builder to support
+	// named types declared in other source modules. Compile the body in place
+	// instead of replacing the registry entry, so cycles resolve to the same
+	// codec instance. Fully built codecs keep the legacy last-wins behavior.
+	if existing, ok := st[n.fullName]; ok && existing != nil && existing.prefillStub {
+		return existing, nil
 	}
 	c := &Codec{typeName: n}
 	st[n.fullName] = c

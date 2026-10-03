@@ -82,6 +82,7 @@ func makeFixedCodec(st map[string]*Codec, enclosingNamespace string, schemaMap m
 		return bytesTextualFromNative(buf, someBytes)
 	}
 
+	c.prefillStub = false
 	return c, nil
 }
 

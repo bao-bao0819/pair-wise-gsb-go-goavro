@@ -249,5 +249,6 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 		return genericMapTextEncoder(buf, datum, nil, codecFromFieldName)
 	}
 
+	c.prefillStub = false
 	return c, nil
 }
