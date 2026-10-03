@@ -26,6 +26,9 @@ func makeFixedCodec(st map[string]*Codec, enclosingNamespace string, schemaMap m
 		return nil, err
 	}
 
+	c.defaultKind = defaultFixed
+	c.defaultSize = int(size)
+
 	c.nativeFromBinary = func(buf []byte) (interface{}, []byte, error) {
 		if buflen := uint(len(buf)); size > buflen {
 			return nil, nil, fmt.Errorf("cannot decode binary fixed %q: schema size exceeds remaining buffer size: %d > %d (short buffer)", c.typeName, size, buflen)

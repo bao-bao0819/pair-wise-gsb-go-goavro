@@ -242,7 +242,11 @@ func buildCodecForTypeDescribedBySlice(st map[string]*Codec, enclosingNamespace 
 		// NOTE: To support record field default values, union schema set to the
 		// type name of first member
 		// TODO: add/change to schemaCanonical below
-		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
+		schemaOriginal:    cr.codecFromIndex[0].typeName.fullName,
+		defaultKind:       defaultUnion,
+		defaultUnionFirst: cr.codecFromIndex[0],
+		defaultUnionAll:   cr.codecFromIndex,
+		defaultUnionName:  cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
 		nativeFromBinary:  unionNativeFromBinary(&cr),
@@ -292,7 +296,11 @@ func buildCodecForTypeDescribedBySliceOneWayJSON(st map[string]*Codec, enclosing
 		// NOTE: To support record field default values, union schema set to the
 		// type name of first member
 		// TODO: add/change to schemaCanonical below
-		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
+		schemaOriginal:    cr.codecFromIndex[0].typeName.fullName,
+		defaultKind:       defaultUnion,
+		defaultUnionFirst: cr.codecFromIndex[0],
+		defaultUnionAll:   cr.codecFromIndex,
+		defaultUnionName:  cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
 		nativeFromBinary:  unionNativeFromBinary(&cr),
@@ -316,7 +324,11 @@ func buildCodecForTypeDescribedBySliceTwoWayJSON(st map[string]*Codec, enclosing
 		// NOTE: To support record field default values, union schema set to the
 		// type name of first member
 		// TODO: add/change to schemaCanonical below
-		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
+		schemaOriginal:    cr.codecFromIndex[0].typeName.fullName,
+		defaultKind:       defaultUnion,
+		defaultUnionFirst: cr.codecFromIndex[0],
+		defaultUnionAll:   cr.codecFromIndex,
+		defaultUnionName:  cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
 		nativeFromBinary:  unionNativeFromBinary(&cr),

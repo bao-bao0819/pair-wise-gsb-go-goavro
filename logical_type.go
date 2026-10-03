@@ -291,7 +291,31 @@ func makeDecimalBytesCodec(st map[string]*Codec, enclosingNamespace string, sche
 		c.nativeFromBinary = nativeFromDecimalBytes(bytesNativeFromBinary, scale)
 		c.nativeFromTextual = nativeFromDecimalBytes(bytesNativeFromTextual, scale)
 	}
+	setDecimalDefault(c)
 	return c, nil
+}
+
+// setDecimalDefault configures default value handling for decimal logical
+// types: a decimal default is declared in the schema as a JSON string, which
+// must round-trip through the codec before it can be used as a native value.
+func setDecimalDefault(c *Codec) {
+	decCodec := c
+	c.defaultKind = defaultLogical
+	c.defaultToNative = func(raw interface{}) (interface{}, error) {
+		text, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("default value ought to have a string type, got: %T", raw)
+		}
+		encoded, err := bytesBinaryFromNative(nil, text)
+		if err != nil {
+			return nil, err
+		}
+		native, _, err := decCodec.nativeFromBinary(encoded)
+		if err != nil {
+			return nil, err
+		}
+		return native, nil
+	}
 }
 
 // nativeFromDecimalBytes decodes bytes to *big.Rat using two's-complement representation.
@@ -396,6 +420,7 @@ func makeDecimalFixedCodec(st map[string]*Codec, enclosingNamespace string, sche
 		c.nativeFromBinary = nativeFromDecimalBytes(c.nativeFromBinary, scale)
 		c.nativeFromTextual = nativeFromDecimalBytes(c.nativeFromTextual, scale)
 	}
+	setDecimalDefault(c)
 	return c, nil
 }
 

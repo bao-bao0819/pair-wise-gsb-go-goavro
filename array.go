@@ -28,7 +28,9 @@ func makeArrayCodec(st map[string]*Codec, enclosingNamespace string, schemaMap m
 	}
 
 	return &Codec{
-		typeName: &name{"array", nullNamespace},
+		typeName:        &name{"array", nullNamespace},
+		defaultKind:     defaultArray,
+		defaultElements: itemCodec,
 		nativeFromBinary: func(buf []byte) (interface{}, []byte, error) {
 			var value interface{}
 			var err error

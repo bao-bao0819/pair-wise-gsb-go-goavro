@@ -80,7 +80,49 @@ type Codec struct {
 	nativeFromBinary  func([]byte) (interface{}, []byte, error)
 	textualFromNative func([]byte, interface{}) ([]byte, error)
 
+	// defaultKind describes how a field default value is validated at
+	// build time and materialized at runtime. It is only set for types
+	// that may appear as the type of a field that declares a default.
+	defaultKind defaultKind
+	// Metadata used while validating and materializing default values.
+	defaultSize       int                                    // fixed: exact size
+	defaultSymbols    []string                               // enum: valid symbols
+	defaultElements   *Codec                                 // array: items codec
+	defaultValues     *Codec                                 // map: values codec
+	defaultUnionFirst *Codec                                 // union: first member codec
+	defaultUnionAll   []*Codec                               // union: all member codecs
+	defaultUnionName  string                                 // union: first member full name
+	defaultFields     []recordDefaultField                   // record: field default metadata
+	defaultToNative   func(interface{}) (interface{}, error) // logical type raw -> native
+	defaultStringNull bool                                   // treat the string "null" as a null union default
+
 	Rabin uint64
+}
+
+// defaultKind identifies the structural role a Codec plays when validating
+// and materializing Avro field default values.
+type defaultKind uint8
+
+const (
+	defaultOther defaultKind = iota
+	defaultRecord
+	defaultUnion
+	defaultArray
+	defaultMap
+	defaultEnum
+	defaultFixed
+	defaultLogical
+)
+
+// recordDefaultField captures everything needed to validate a record field's
+// default value at build time and to materialize an independent copy of it at
+// runtime.
+type recordDefaultField struct {
+	name   string
+	codec  *Codec
+	has    bool
+	raw    interface{} // default as decoded from the schema JSON (never mutated)
+	native interface{} // coerced value used by the encoders (never mutated)
 }
 
 // codecBuilder holds the 3 kinds of codec builders so they can be
@@ -264,6 +306,12 @@ func NewCodecFrom(schemaSpecification string, cb *codecBuilder) (*Codec, error) 
 
 	c, err := buildCodec(st, nullNamespace, schema, cb)
 	if err != nil {
+		return nil, err
+	}
+	if cb.option != nil {
+		c.defaultStringNull = cb.option.EnableStringNull
+	}
+	if err := validateRecordDefaults(c); err != nil {
 		return nil, err
 	}
 	c.schemaCanonical, err = parsingCanonicalForm(schema, "", make(map[string]string))
@@ -640,6 +688,27 @@ func (c *Codec) TextualFromNative(buf []byte, datum interface{}) ([]byte, error)
 // Schema returns the original schema used to create the Codec.
 func (c *Codec) Schema() string {
 	return c.schemaOriginal
+}
+
+// MaterializeDefaults creates a new, fully independent native Go object for a
+// record schema using the default values declared in the schema. Fields
+// without a declared default are left unspecified (the key is omitted from
+// the returned map) rather than being filled with Go zero values.
+//
+// Every call returns a fresh object: maps, slices, byte slices and nested
+// records are deep materialized, so mutating the returned value (or any value
+// returned by a later call) never affects another materialized object.
+//
+// MaterializeDefaults only applies to record schemas.
+func (c *Codec) MaterializeDefaults() (map[string]interface{}, error) {
+	if c.defaultKind != defaultRecord {
+		return nil, fmt.Errorf("cannot materialize defaults: schema type %q is not a record", c.typeName)
+	}
+	value, err := materializeRecordDefault(c, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return value.(map[string]interface{}), nil
 }
 
 // CanonicalSchema returns the Parsing Canonical Form of the schema according to

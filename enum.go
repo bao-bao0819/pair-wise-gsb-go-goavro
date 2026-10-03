@@ -43,6 +43,9 @@ func makeEnumCodec(st map[string]*Codec, enclosingNamespace string, schemaMap ma
 		symbols[i] = symbol
 	}
 
+	c.defaultKind = defaultEnum
+	c.defaultSymbols = symbols
+
 	c.nativeFromBinary = func(buf []byte) (interface{}, []byte, error) {
 		var value interface{}
 		var err error

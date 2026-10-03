@@ -29,7 +29,9 @@ func makeMapCodec(st map[string]*Codec, namespace string, schemaMap map[string]i
 	}
 
 	return &Codec{
-		typeName: &name{"map", nullNamespace},
+		typeName:      &name{"map", nullNamespace},
+		defaultKind:   defaultMap,
+		defaultValues: valueCodec,
 		nativeFromBinary: func(buf []byte) (interface{}, []byte, error) {
 			var err error
 			var value interface{}
