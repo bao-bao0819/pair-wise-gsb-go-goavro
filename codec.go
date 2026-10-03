@@ -776,6 +776,15 @@ func registerNewCodec(st map[string]*Codec, schemaMap map[string]interface{}, en
 	if err != nil {
 		return nil, err
 	}
+	// When a placeholder codec for this full name already exists, reuse it
+	// rather than overwriting the symbol table entry. This is required for
+	// modular builds, where every named type is registered up front (phase 1)
+	// and only filled in later (phase 2). Other codecs may already hold
+	// pointers to the placeholder, so replacing it would leave dangling
+	// references and break mutually recursive records across files.
+	if existing, ok := st[n.fullName]; ok && existing != nil && existing.typeName != nil && existing.binaryFromNative == nil {
+		return existing, nil
+	}
 	c := &Codec{typeName: n}
 	st[n.fullName] = c
 	return c, nil
