@@ -245,6 +245,7 @@ func buildCodecForTypeDescribedBySlice(st map[string]*Codec, enclosingNamespace 
 		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
+		unionMemberCodecs: cr.codecFromIndex,
 		nativeFromBinary:  unionNativeFromBinary(&cr),
 		binaryFromNative:  unionBinaryFromNative(&cr),
 		nativeFromTextual: unionNativeFromTextual(&cr),
@@ -295,6 +296,7 @@ func buildCodecForTypeDescribedBySliceOneWayJSON(st map[string]*Codec, enclosing
 		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
+		unionMemberCodecs: cr.codecFromIndex,
 		nativeFromBinary:  unionNativeFromBinary(&cr),
 		binaryFromNative:  unionBinaryFromNative(&cr),
 		nativeFromTextual: nativeAvroFromTextualJSON(&cr),
@@ -319,6 +321,7 @@ func buildCodecForTypeDescribedBySliceTwoWayJSON(st map[string]*Codec, enclosing
 		schemaOriginal: cr.codecFromIndex[0].typeName.fullName,
 
 		typeName:          &name{"union", nullNamespace},
+		unionMemberCodecs: cr.codecFromIndex,
 		nativeFromBinary:  unionNativeFromBinary(&cr),
 		binaryFromNative:  unionBinaryFromNative(&cr),
 		nativeFromTextual: nativeAvroFromTextualJSON(&cr),

@@ -28,22 +28,72 @@ func makeMapCodec(st map[string]*Codec, namespace string, schemaMap map[string]i
 		return nil, fmt.Errorf("Map values ought to be valid Avro type: %s", err)
 	}
 
-	return &Codec{
-		typeName: &name{"map", nullNamespace},
-		nativeFromBinary: func(buf []byte) (interface{}, []byte, error) {
-			var err error
-			var value interface{}
+	c := &Codec{
+		typeName:      &name{"map", nullNamespace},
+		mapValueCodec: valueCodec,
+	}
 
-			// block count and block size
+	c.nativeFromBinary = func(buf []byte) (interface{}, []byte, error) {
+		var err error
+		var value interface{}
+
+		// block count and block size
+		if value, buf, err = longNativeFromBinary(buf); err != nil {
+			return nil, nil, fmt.Errorf("cannot decode binary map block count: %s", err)
+		}
+		blockCount := value.(int64)
+		if blockCount < 0 {
+			// NOTE: A negative block count implies there is a long encoded
+			// block size following the negative block count. We have no use
+			// for the block size in this decoder, so we read and discard
+			// the value.
+			if blockCount == math.MinInt64 {
+				// The minimum number for any signed numerical type can
+				// never be made positive
+				return nil, nil, fmt.Errorf("cannot decode binary map with block count: %d", blockCount)
+			}
+			blockCount = -blockCount // convert to its positive equivalent
+			if _, buf, err = longNativeFromBinary(buf); err != nil {
+				return nil, nil, fmt.Errorf("cannot decode binary map block size: %s", err)
+			}
+		}
+		// Ensure block count does not exceed some sane value.
+		if blockCount > MaxBlockCount {
+			return nil, nil, fmt.Errorf("cannot decode binary map when block count exceeds MaxBlockCount: %d > %d", blockCount, MaxBlockCount)
+		}
+		// NOTE: While the attempt of a RAM optimization shown below is not
+		// necessary, many encoders will encode all items in a single block.
+		// We can optimize amount of RAM allocated by runtime for the array
+		// by initializing the array for that number of items.
+		mapValues := make(map[string]interface{}, blockCount)
+
+		for blockCount != 0 {
+			// Decode `blockCount` datum values from buffer
+			for i := int64(0); i < blockCount; i++ {
+				// first decode the key string
+				if value, buf, err = stringNativeFromBinary(buf); err != nil {
+					return nil, nil, fmt.Errorf("cannot decode binary map key: %s", err)
+				}
+				key := value.(string) // string decoder always returns a string
+				if _, ok := mapValues[key]; ok {
+					return nil, nil, fmt.Errorf("cannot decode binary map: duplicate key: %q", key)
+				}
+				// then decode the value
+				if value, buf, err = valueCodec.nativeFromBinary(buf); err != nil {
+					return nil, nil, fmt.Errorf("cannot decode binary map value for key %q: %s", key, err)
+				}
+				mapValues[key] = value
+			}
+			// Decode next blockCount from buffer, because there may be more blocks
 			if value, buf, err = longNativeFromBinary(buf); err != nil {
 				return nil, nil, fmt.Errorf("cannot decode binary map block count: %s", err)
 			}
-			blockCount := value.(int64)
+			blockCount = value.(int64)
 			if blockCount < 0 {
-				// NOTE: A negative block count implies there is a long encoded
-				// block size following the negative block count. We have no use
-				// for the block size in this decoder, so we read and discard
-				// the value.
+				// NOTE: A negative block count implies there is a long
+				// encoded block size following the negative block count. We
+				// have no use for the block size in this decoder, so we
+				// read and discard the value.
 				if blockCount == math.MinInt64 {
 					// The minimum number for any signed numerical type can
 					// never be made positive
@@ -58,95 +108,48 @@ func makeMapCodec(st map[string]*Codec, namespace string, schemaMap map[string]i
 			if blockCount > MaxBlockCount {
 				return nil, nil, fmt.Errorf("cannot decode binary map when block count exceeds MaxBlockCount: %d > %d", blockCount, MaxBlockCount)
 			}
-			// NOTE: While the attempt of a RAM optimization shown below is not
-			// necessary, many encoders will encode all items in a single block.
-			// We can optimize amount of RAM allocated by runtime for the array
-			// by initializing the array for that number of items.
-			mapValues := make(map[string]interface{}, blockCount)
+		}
+		return mapValues, buf, nil
+	}
+	c.binaryFromNative = func(buf []byte, datum interface{}) ([]byte, error) {
+		mapValues, err := convertMap(datum)
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode binary map: %s", err)
+		}
 
-			for blockCount != 0 {
-				// Decode `blockCount` datum values from buffer
-				for i := int64(0); i < blockCount; i++ {
-					// first decode the key string
-					if value, buf, err = stringNativeFromBinary(buf); err != nil {
-						return nil, nil, fmt.Errorf("cannot decode binary map key: %s", err)
-					}
-					key := value.(string) // string decoder always returns a string
-					if _, ok := mapValues[key]; ok {
-						return nil, nil, fmt.Errorf("cannot decode binary map: duplicate key: %q", key)
-					}
-					// then decode the value
-					if value, buf, err = valueCodec.nativeFromBinary(buf); err != nil {
-						return nil, nil, fmt.Errorf("cannot decode binary map value for key %q: %s", key, err)
-					}
-					mapValues[key] = value
+		keyCount := int64(len(mapValues))
+		var alreadyEncoded, remainingInBlock int64
+
+		for k, v := range mapValues {
+			if remainingInBlock == 0 { // start a new block
+				remainingInBlock = keyCount - alreadyEncoded
+				if remainingInBlock > MaxBlockCount {
+					// limit block count to MacBlockCount
+					remainingInBlock = MaxBlockCount
 				}
-				// Decode next blockCount from buffer, because there may be more blocks
-				if value, buf, err = longNativeFromBinary(buf); err != nil {
-					return nil, nil, fmt.Errorf("cannot decode binary map block count: %s", err)
-				}
-				blockCount = value.(int64)
-				if blockCount < 0 {
-					// NOTE: A negative block count implies there is a long
-					// encoded block size following the negative block count. We
-					// have no use for the block size in this decoder, so we
-					// read and discard the value.
-					if blockCount == math.MinInt64 {
-						// The minimum number for any signed numerical type can
-						// never be made positive
-						return nil, nil, fmt.Errorf("cannot decode binary map with block count: %d", blockCount)
-					}
-					blockCount = -blockCount // convert to its positive equivalent
-					if _, buf, err = longNativeFromBinary(buf); err != nil {
-						return nil, nil, fmt.Errorf("cannot decode binary map block size: %s", err)
-					}
-				}
-				// Ensure block count does not exceed some sane value.
-				if blockCount > MaxBlockCount {
-					return nil, nil, fmt.Errorf("cannot decode binary map when block count exceeds MaxBlockCount: %d > %d", blockCount, MaxBlockCount)
-				}
-			}
-			return mapValues, buf, nil
-		},
-		binaryFromNative: func(buf []byte, datum interface{}) ([]byte, error) {
-			mapValues, err := convertMap(datum)
-			if err != nil {
-				return nil, fmt.Errorf("cannot encode binary map: %s", err)
+				buf, _ = longBinaryFromNative(buf, remainingInBlock)
 			}
 
-			keyCount := int64(len(mapValues))
-			var alreadyEncoded, remainingInBlock int64
+			// only fails when given non string, so elide error checking
+			buf, _ = stringBinaryFromNative(buf, k)
 
-			for k, v := range mapValues {
-				if remainingInBlock == 0 { // start a new block
-					remainingInBlock = keyCount - alreadyEncoded
-					if remainingInBlock > MaxBlockCount {
-						// limit block count to MacBlockCount
-						remainingInBlock = MaxBlockCount
-					}
-					buf, _ = longBinaryFromNative(buf, remainingInBlock)
-				}
-
-				// only fails when given non string, so elide error checking
-				buf, _ = stringBinaryFromNative(buf, k)
-
-				// encode the value
-				if buf, err = valueCodec.binaryFromNative(buf, v); err != nil {
-					return nil, fmt.Errorf("cannot encode binary map value for key %q: %v: %s", k, v, err)
-				}
-
-				remainingInBlock--
-				alreadyEncoded++
+			// encode the value
+			if buf, err = valueCodec.binaryFromNative(buf, v); err != nil {
+				return nil, fmt.Errorf("cannot encode binary map value for key %q: %v: %s", k, v, err)
 			}
-			return longBinaryFromNative(buf, 0) // append tailing 0 block count to signal end of Map
-		},
-		nativeFromTextual: func(buf []byte) (interface{}, []byte, error) {
-			return genericMapTextDecoder(buf, valueCodec, nil, false) // codecFromKey == nil, ignoreExtraFields == false
-		},
-		textualFromNative: func(buf []byte, datum interface{}) ([]byte, error) {
-			return genericMapTextEncoder(buf, datum, valueCodec, nil)
-		},
-	}, nil
+
+			remainingInBlock--
+			alreadyEncoded++
+		}
+		return longBinaryFromNative(buf, 0) // append tailing 0 block count to signal end of Map
+	}
+	c.nativeFromTextual = func(buf []byte) (interface{}, []byte, error) {
+		return genericMapTextDecoder(buf, valueCodec, nil, false) // codecFromKey == nil, ignoreExtraFields == false
+	}
+	c.textualFromNative = func(buf []byte, datum interface{}) ([]byte, error) {
+		return genericMapTextEncoder(buf, datum, valueCodec, nil)
+	}
+	return c, nil
 }
 
 // genericMapTextDecoder decodes a JSON text blob to a native Go map, using the

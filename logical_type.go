@@ -274,6 +274,7 @@ func makeDecimalBytesCodec(st map[string]*Codec, enclosingNamespace string, sche
 	// Add an additional cached codec for this "bytes.decimal" keyed also by "precision" and "scale"
 	decimalSearchType := fmt.Sprintf("bytes.decimal.%d.%d", precision, scale)
 	st[decimalSearchType] = c
+	c.logicalDecimal = true
 
 	// Check if spec-compliant encoding is enabled
 	specCompliant := cb != nil && cb.option != nil && cb.option.EnableDecimalBinarySpecCompliantEncoding
@@ -375,6 +376,7 @@ func makeDecimalFixedCodec(st map[string]*Codec, enclosingNamespace string, sche
 	if err != nil {
 		return nil, err
 	}
+	c.logicalDecimal = true
 	size, err := sizeFromSchemaMap(c.typeName, schemaMap)
 	if err != nil {
 		return nil, err

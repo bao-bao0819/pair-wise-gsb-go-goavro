@@ -25,6 +25,8 @@ func makeFixedCodec(st map[string]*Codec, enclosingNamespace string, schemaMap m
 	if err != nil {
 		return nil, err
 	}
+	sizeCopy := size
+	c.fixedSize = &sizeCopy
 
 	c.nativeFromBinary = func(buf []byte) (interface{}, []byte, error) {
 		if buflen := uint(len(buf)); size > buflen {

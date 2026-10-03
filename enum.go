@@ -42,6 +42,7 @@ func makeEnumCodec(st map[string]*Codec, enclosingNamespace string, schemaMap ma
 		}
 		symbols[i] = symbol
 	}
+	c.enumSymbols = symbols
 
 	c.nativeFromBinary = func(buf []byte) (interface{}, []byte, error) {
 		var value interface{}

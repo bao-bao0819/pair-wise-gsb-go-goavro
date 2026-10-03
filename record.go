@@ -34,6 +34,11 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 	codecFromIndex := make([]*Codec, len(fieldSchemas))
 	nameFromIndex := make([]string, len(fieldSchemas))
 	defaultValueFromName := make(map[string]interface{}, len(fieldSchemas))
+	fieldSchemasFromIndex := make([]*recordFieldSchema, len(fieldSchemas))
+	// Publish field metadata before validating defaults below: a field
+	// default may refer back to this record (recursive schema) and default
+	// validation traverses the codec structure.
+	c.recordFields = fieldSchemasFromIndex
 
 	for i, fieldSchema := range fieldSchemas {
 		fieldSchemaMap, ok := fieldSchema.(map[string]interface{})
@@ -60,88 +65,43 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 			return nil, fmt.Errorf("Record %q field %d ought to have unique name: %q", c.typeName, i+1, fieldName)
 		}
 
-		if defaultValue, ok := fieldSchemaMap["default"]; ok {
-			typeNameShort := fieldCodec.typeName.short()
-			switch typeNameShort {
-			case "boolean":
-				v, ok := defaultValue.(bool)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a bool type, got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = v
-			case "bytes":
-				v, ok := defaultValue.(string)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a string type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = []byte(v)
-			case "double":
-				v, ok := defaultValue.(float64)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a double type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = v
-			case "float":
-				v, ok := defaultValue.(float64)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a float type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = float32(v)
-			case "int":
-				v, ok := defaultValue.(float64)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a number type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = int32(v)
-			case "long":
-				v, ok := defaultValue.(float64)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a number type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = int64(v)
-			case "string":
-				v, ok := defaultValue.(string)
-				if !ok {
-					return nil, fmt.Errorf("Record %q field %q: default value ought to have a string type got: %T", c.typeName, fieldName, defaultValue)
-				}
-				defaultValue = v
-			case "union":
-				// When codec is union, then default value ought to encode using first schema in union.
-				// NOTE: To support a null default value, the string literal "null" must be coerced to a `nil` when `EnableStringNull` = `true`
-				// see https://github.com/linkedin/goavro/issues/280
-				if cb.option.EnableStringNull && defaultValue == "null" {
-					defaultValue = nil
-				}
-				// NOTE: To support record field default values, union schema
-				// set to the type name of first member
-				// TODO: change to schemaCanonical below
-				defaultValue = Union(fieldCodec.schemaOriginal, defaultValue)
-			default:
-				// Support defaults for logical types
-				if fieldSchemaMap["logicalType"] == "decimal" || typeNameShort == "decimal" {
-					v, ok := defaultValue.(string)
-					if !ok {
-						return nil, fmt.Errorf("Record %q field %q: default value ought to have a string type got: %T", c.typeName, fieldName, defaultValue)
-					}
-					// the default is a native byte array, we need to encode it first, then we can decode it into a *big.Rat
-					encoded, err := bytesBinaryFromNative(nil, v)
-					if err != nil {
-						return nil, fmt.Errorf("Record %q field %q: default value ought to be encodable from native binary: %w", c.typeName, fieldName, err)
-					}
-					defaultValue, _, err = fieldCodec.nativeFromBinary(encoded)
-					if err != nil {
-						return nil, fmt.Errorf("Record %q field %q: default value ought to decode from textual: %w", c.typeName, fieldName, err)
-					}
-				} else {
-					debug("fieldName: %q; type: %q; defaultValue: %T(%#v)\n", fieldName, c.typeName, defaultValue, defaultValue)
-				}
+		fieldInfo := &recordFieldSchema{name: fieldName, codec: fieldCodec}
+		fieldSchemasFromIndex[i] = fieldInfo
+
+		rawDefault, hasDefault := fieldSchemaMap["default"]
+		if hasDefault {
+			// NOTE: To support a null default value, the string literal
+			// "null" is coerced to nil when EnableStringNull is true.
+			// see https://github.com/linkedin/goavro/issues/280
+			if cb.option.EnableStringNull && rawDefault == "null" {
+				rawDefault = nil
 			}
 
-			// attempt to encode default value using codec
-			_, err = fieldCodec.binaryFromNative(nil, defaultValue)
-			if err != nil {
+			// Publish hasDefault and the raw default before validation below:
+			// a recursive default reaches back into this same field, and
+			// non-terminating expansion detection must see it as a default.
+			// rawDefault is a value decoded from the schema JSON, so mutating
+			// this local never rewrites the original schema text.
+			fieldInfo.hasDefault = true
+			fieldInfo.defaultRaw = rawDefault
+
+			// Validate the default against the field schema field by field at
+			// codec construction time, and convert it to its native Go form.
+			// Every field's default is validated here, rather than lazily when
+			// data happens to omit the field.
+			dctx := &defaultContext{coerceNullString: cb.option.EnableStringNull}
+			defer dctx.enter(fieldName)()
+			defaultValue, derr := dctx.materializeFromDefault(fieldCodec, rawDefault)
+			if derr != nil {
+				return nil, fmt.Errorf("Record %q field %q: default value ought to encode using field schema: %s", c.typeName, fieldName, derr)
+			}
+			// Final check that the converted native value round-trips through
+			// the field's binary encoder, which validates logical type
+			// constraints not covered above (e.g. decimal scale/precision).
+			if _, err = fieldCodec.binaryFromNative(nil, defaultValue); err != nil {
 				return nil, fmt.Errorf("Record %q field %q: default value ought to encode using field schema: %s", c.typeName, fieldName, err)
 			}
+			fieldInfo.defaultNative = defaultValue
 			defaultValueFromName[fieldName] = defaultValue
 		}
 
@@ -168,6 +128,7 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 				if fieldValue, ok = defaultValueFromName[fieldName]; !ok {
 					return nil, fmt.Errorf("cannot encode binary record %q field %q: schema does not specify default value and no value provided", c.typeName, fieldName)
 				}
+				fieldValue = deepCopyNative(codecFromIndex[i], fieldValue)
 			}
 
 			var err error
@@ -212,7 +173,8 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 			// re-check number of keys
 			for fieldName, defaultValue := range defaultValueFromName {
 				if _, ok := mapValues[fieldName]; !ok {
-					mapValues[fieldName] = defaultValue
+					fieldInfo := codecFromFieldName[fieldName]
+					mapValues[fieldName] = deepCopyNative(fieldInfo, defaultValue)
 				}
 			}
 			if actual, expected = len(mapValues), len(codecFromFieldName); actual != expected {
@@ -238,7 +200,7 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 				if !ok {
 					return nil, fmt.Errorf("cannot encode textual record %q field %q: schema does not specify default value and no value provided", c.typeName, fieldName)
 				}
-				fieldValue = defaultValue
+				fieldValue = deepCopyNative(codecFromFieldName[fieldName], defaultValue)
 			}
 			destMap[fieldName] = fieldValue
 		}

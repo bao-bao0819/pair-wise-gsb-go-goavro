@@ -75,12 +75,42 @@ type Codec struct {
 	schemaCanonical string
 	typeName        *name
 
+	// schema metadata used to validate default values at codec construction
+	// time and to materialize independent copies of record default values.
+	// Every field below is nil for codec kinds it does not describe.
+	recordFields      []*recordFieldSchema // ordered fields for record codecs
+	arrayItemCodec    *Codec               // items codec for array codecs
+	mapValueCodec     *Codec               // values codec for map codecs
+	unionMemberCodecs []*Codec             // ordered member codecs for union codecs
+	fixedSize         *uint                // exact byte length for fixed codecs
+	enumSymbols       []string             // allowed symbols for enum codecs
+	logicalDecimal    bool                 // bytes/fixed carrying decimal logical type
+
 	nativeFromTextual func([]byte) (interface{}, []byte, error)
 	binaryFromNative  func([]byte, interface{}) ([]byte, error)
 	nativeFromBinary  func([]byte) (interface{}, []byte, error)
 	textualFromNative func([]byte, interface{}) ([]byte, error)
 
 	Rabin uint64
+}
+
+// recordFieldSchema describes a single field of a record schema, including the
+// codec for the field type and the default value declared in the schema, if
+// any. hasDefault reports whether a default was declared, so that a declared
+// null default can be distinguished from a missing one.
+type recordFieldSchema struct {
+	name       string
+	codec      *Codec
+	hasDefault bool
+	// defaultRaw is the value declared in the schema JSON, before conversion
+	// to the native Go representation. It is retained to materialize defaults
+	// of nested records on demand and is never mutated.
+	defaultRaw interface{}
+	// defaultNative is the default value converted to its native Go
+	// representation once at codec construction time. It must never be handed
+	// out directly to callers: map, slice, []byte and nested record values are
+	// deep copied on every materialization.
+	defaultNative interface{}
 }
 
 // codecBuilder holds the 3 kinds of codec builders so they can be
