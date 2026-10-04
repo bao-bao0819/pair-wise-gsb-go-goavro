@@ -198,6 +198,36 @@ func main() {
 Also please see the example programs in the `examples` directory for
 reference.
 
+## Checked decimal text conversion
+
+Backends that exchange monetary amounts as decimal text can use
+`NewDecimalConverter` to convert between exact base-10 strings and the raw
+two's complement logical bytes of a `bytes` or `fixed` Avro decimal. Values
+are scaled with `math/big` only; they never pass through `float32` or
+`float64`.
+
+```go
+converter, err := goavro.NewDecimalConverter(
+    `{"type":"bytes","logicalType":"decimal","precision":10,"scale":2}`)
+if err != nil {
+    log.Fatal(err)
+}
+
+// "12.34" -> []byte{0x04, 0xd2} (unscaled 1234)
+raw, err := converter.Encode("12.34")
+
+// Decoded text is canonical for the scale: "12.30" decodes and re-renders
+// as "12.30", "-0.00" as "0.00".
+text, err := converter.Decode(raw)
+```
+
+Conversions are checked: values exceeding `precision`, values that cannot fit
+the `fixed` width, and inputs that would need rounding to reach `scale` return
+an error instead of being silently truncated. Bytes use the shortest legal
+two's complement representation; fixed values are sign extended to the fixed
+size. The produced logical bytes are the same representation the general
+`Codec` uses for `*big.Rat` decimals.
+
 ## OCF file reading and writing
 
 This library supports reading and writing data in [Object Container File (OCF)](https://avro.apache.org/docs/current/spec.html#Object+Container+Files) format
